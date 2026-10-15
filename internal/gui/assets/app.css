@@ -3991,3 +3991,9 @@ input[type="checkbox"]:disabled { opacity: .45; }
 .row.pref .sub.proxy-check { margin-top: 3px; white-space: normal; overflow-wrap: anywhere; }
 .proxy-check[hidden] { display: none; }
 .row.pref .sub.proxy-check.err { color: var(--red); }
+
+/* a model chip's native Responses slug box (#1571) */
+.native-slug-menu .proto-row { display: flex; gap: 6px; padding: 6px 8px; }
+.native-slug-menu .proto-row input { flex: 1; min-width: 12em; }
+.native-slug-menu .hint { padding: 0 8px 8px; max-width: 22em; }
+.native-slug-menu .hint.bad { color: var(--red); }

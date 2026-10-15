@@ -3759,6 +3759,16 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 	replay := proto == provider.Responses && (replaysReasoning(model, p.Host()) || replaysReasoning(upstream, p.Host()))
 	switch proto {
 	case provider.Responses:
+		// a model the user said is served as OpenAI's native Responses
+		// API serves it (#1571), by magpie's id for it (settings'
+		// ModelNative keys), not the name it goes out as. Not for a try of
+		// a routing group's member: a group's entry is offered no native
+		// capabilities (provider.CodexTiers), so its requests are fitted
+		// as for any relay
+		native := false
+		if !inGroupTry(r.Context()) {
+			native, _ = p.NativeModel(model)
+		}
 		if p.CodexAsSent && p.Account == nil && fromCodex(r.Header) {
 			// as Codex sent it, its model name alone swapped: a relay
 			// that checks it is Codex's own turns away the shape fitted
@@ -3767,11 +3777,14 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 		}
 		// Responses Lite's tools, as an input item, go as OpenAI takes them
 		// only to OpenAI (#350)
-		if (p.Account == nil || p.Account.Agent != "codex") && !strings.HasSuffix(p.Host(), "openai.com") {
+		// and to a relay set to have OpenAI's models behind it (#1571),
+		// whose Lite request it turns away is answered with its error
+		if (p.Account == nil || p.Account.Agent != "codex") && !strings.HasSuffix(p.Host(), "openai.com") && !native {
 			body = liftAdditionalTools(body)
 		}
-		// only the ChatGPT backend runs Codex's tool search as Codex sends it
-		if p.Account == nil || p.Account.Agent != "codex" {
+		// only the ChatGPT backend, and such a relay, run Codex's tool
+		// search as Codex sends it
+		if (p.Account == nil || p.Account.Agent != "codex") && !native {
 			body, searchFn = searchAsFunction(body)
 		}
 		body = forVendor(p, body)

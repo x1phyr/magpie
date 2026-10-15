@@ -630,6 +630,14 @@ func CodexTiers(m *catalog.Model, e Entry, members func(id string) []Member) {
 	// a provider the user added by its address is sent the tier Codex
 	// asks for as it is (hsiangron on X)
 	m.OwnTier = e.Group == "" && e.Provider.Preset == "" && e.Provider.Account == nil && e.Provider.ID != ""
+	// and a model set native Responses compatible takes the prompt and
+	// tool capabilities of Codex's own entry for it (#1571), by magpie's id
+	// for it (settings' ModelNative keys), not the name it goes out as. A
+	// routing group's entry never does, whatever its members are set: the
+	// gateway fits a group's requests as for any relay
+	if m.OwnTier {
+		m.NativeResponses, m.NativeAlias = e.Provider.NativeModel(strings.TrimPrefix(e.ID, e.Provider.ID+"/"))
+	}
 	// another magpie offers the tiers its own Codex is offered on the
 	// model, and is sent the one Codex asks for as it is (#1234)
 	if e.Group == "" && e.Provider.IsRemoteMagpie() {

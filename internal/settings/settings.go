@@ -619,6 +619,12 @@ type Settings struct {
 	// Absent leaves it to the vendor's list and the model's name (see
 	// provider.SetModelKind).
 	ModelKinds map[string]string `json:"modelKinds,omitempty"`
+	// ModelNative is the models, by "<provider id>/<model id>", the user
+	// said are served as OpenAI's native Responses API serves them (#1571):
+	// "*" for one mapped to Codex's own entry by its id, else the slug of
+	// that entry, as "gpt-6.1-sol" for "tx-gpt-6.1-sol-standard". Absent,
+	// the default, is off (see provider.SetModelNative).
+	ModelNative map[string]string `json:"modelNative,omitempty"`
 	// The main window's size as it last settled, width and height, so it
 	// opens at it again after a restart: the size it is restored to, kept as
 	// it was while it is maximised, and a side fitted to a smaller screen

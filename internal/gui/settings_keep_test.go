@@ -133,6 +133,7 @@ func TestSettingsSaveKeepsWhatItDoesNotSend(t *testing.T) {
 		ModelAPIs:            map[string]string{"p/m": "anthropic"},
 		ModelSameAs:          map[string]string{"p/m": "deepseek-v4.1-flash"},
 		ModelKinds:           map[string]string{"p/m": "video"},
+		ModelNative:          map[string]string{"p/m": "gpt-6.1-sol"},
 		RedactRules:          []redact.Rule{{Kind: "prefix", Prefix: "oc_sk_"}},
 		LAN:                  true,
 		LANKey:               "sk-lan",

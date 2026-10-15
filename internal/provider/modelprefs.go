@@ -499,6 +499,11 @@ type ModelPref struct {
 	// Kind is what the model makes, as SetModelKind takes it: "image",
 	// "video", or "" for what its vendor's list and name say (#1399)
 	Kind *string `json:"kind,omitempty"`
+	// Native is whether it is served as OpenAI's native Responses API
+	// serves it, and NativeSlug the slug of Codex's own entry it is
+	// ("" by its id), as SetModelNative takes them (#1571)
+	Native     *bool   `json:"native,omitempty"`
+	NativeSlug *string `json:"nativeSlug,omitempty"`
 }
 
 // SetModelPrefs makes the changes to a provider's models, by model id, as
@@ -553,6 +558,11 @@ func SetModelPrefs(pid string, prefs map[string]ModelPref) error {
 			// and the gateway reads it for each request (#1399)
 			if m.Kind != nil {
 				if _, err := setModelKind(ref, *m.Kind); err != nil {
+					return err
+				}
+			}
+			if m.Native != nil || m.NativeSlug != nil {
+				if err := set(setModelNative(ref, m.Native, m.NativeSlug)); err != nil {
 					return err
 				}
 			}

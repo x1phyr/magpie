@@ -10277,6 +10277,39 @@ function renderModels(p) {
       status(t(v === "video" ? "{model} makes videos once saved" : v === "image" ? "{model} draws images once saved" : "{model} makes what its vendor's list says once saved", { model: id }), "ok");
     }, "What this model makes", "model-kind-menu");
   };
+  // served as OpenAI's native Responses API serves it (#1571): Codex is
+  // offered its own prompt, Code Mode and Responses Lite on it, mapped to
+  // Codex's own entry by its id or the slug named here, and its requests go
+  // unchanged. Only a custom provider's model asked on Responses; staged as
+  // its API is, made with the Save
+  const nativeNow = (id) => draft.modelPrefs?.[id]?.native ?? p.models.find((m) => m.id === id)?.native ?? false;
+  const nativeSlugNow = (id) => draft.modelPrefs?.[id]?.nativeSlug ?? p.models.find((m) => m.id === id)?.nativeSlug ?? "";
+  const nativeWhy = (id) => {
+    const api = apiNow(id);
+    if (api && api !== "responses") return t("Asked on {api}: only a model asked on Responses can be", { api: apiLabel(api) });
+    return "";
+  };
+  const stageNative = (id, on, slug) => {
+    const m = p.models.find((x) => x.id === id) || { id };
+    const prefs = draft.modelPrefs = draft.modelPrefs || {};
+    prefs[id] = prefs[id] || {};
+    if (on === !!m.native) delete prefs[id].native; else prefs[id].native = on;
+    if (slug !== undefined) { if (slug === (m.nativeSlug || "")) delete prefs[id].nativeSlug; else prefs[id].nativeSlug = slug; }
+    if (!Object.keys(prefs[id]).length) delete prefs[id];
+    draw();
+  };
+  const toggleNative = (id) => {
+    const on = !nativeNow(id);
+    stageNative(id, on);
+    status(t(on ? "{model} is served as native Responses once saved" : "{model} is fitted as for any relay once saved", { model: id }), "ok");
+  };
+  const pickNativeSlug = (c, id) => {
+    openSlugMenu(c, nativeSlugNow(id), (v) => {
+      if (v === nativeSlugNow(id)) return;
+      stageNative(id, true, v);
+      status(v ? t("{model} is Codex's own {slug} once saved", { model: id, slug: v }) : t("{model} is mapped by its id once saved", { model: id }), "ok");
+    });
+  };
   const menu = (c, id) => {
     // a decision model is asked a System One question where the server
     // says its API takes one (decideTest)
@@ -10307,6 +10340,14 @@ function renderModels(p) {
         const now = apiNow(id);
         acts.push({ name: now ? t("Asked on {api}…", { api: apiLabel(now) }) : t("Asked on: Auto…"), icon: "M2.5 5h11M2.5 11h11M10.5 2.5 13.5 5l-3 2.5M5.5 8.5 2.5 11l3 2.5", tip: t("Pick the API this model is asked on"), run: () => pickAPI(c, id) });
       }
+      if (p.nativeCapable && !decidesModel(p, id)) {
+        const on = nativeNow(id), why = nativeWhy(id);
+        acts.push({ name: t("Native Responses compatible"), icon: on ? CHECK : "M3.5 3.5h9v9h-9z", off: !!why && !on, why, tip: t("Only for a relay that truly serves OpenAI's native Responses API with OpenAI's own GPT models: Codex gets their own prompt, Code Mode and Responses Lite, and its requests go to this provider unchanged. A request the provider turns away is shown with its error."), run: () => toggleNative(id) });
+        if (on) {
+          const s = nativeSlugNow(id);
+          acts.push({ name: s ? t("Native model: {slug}…", { slug: s }) : t("Native model: by its ID…"), icon: "M2.5 8h11M9.5 4.5 13 8l-3.5 3.5", tip: t("The OpenAI model Codex's own catalog names it, when its ID here is another, as tx-gpt-6.1-sol-standard for gpt-6.1-sol"), run: () => pickNativeSlug(c, id) });
+        }
+      }
       if (p.marksKinds && !decidesModel(p, id)) {
         const k = kindNow(id);
         acts.push({ name: k ? t("Makes: {kind}…", { kind: t(KIND_NAMES[k]) }) : t("Makes: Auto…"), icon: "M2.5 4h11v8h-11zM6.5 6.25v3.5L9.5 8z", tip: t("Say this model makes images or videos, when the provider's model list doesn't"), run: () => pickKind(c, id) });
@@ -10318,6 +10359,12 @@ function renderModels(p) {
     if (now) {
       const tag = el("span", "badge mapi-tag", apiLabel(now));
       tag.title = t("Asked on {api} alone; right-click to change", { api: apiLabel(now) });
+      c.append(tag);
+    }
+    if (p.nativeCapable && !decidesModel(p, id) && nativeNow(id)) {
+      const tag = el("span", "badge mnative-tag", t("native"));
+      const s = nativeSlugNow(id);
+      tag.title = s ? t("Native Responses, as Codex's own {slug}; right-click to change", { slug: s }) : t("Native Responses, mapped by its ID; right-click to change");
       c.append(tag);
     }
     const kind = p.marksKinds && !decidesModel(p, id) ? kindNow(id) : "";
@@ -13902,6 +13949,54 @@ function placeMenu(box, anchor, align = "left", dx = 0) {
   box.style.left = Math.max(pad, Math.min(left, innerWidth - w - pad)) + "px";
   box.style.top = Math.max(top, y) + "px";
 }
+// NATIVE_SLUG is what a native slug may be, as provider.nativeSlug says
+const NATIVE_SLUG = /^(gpt-|o\d)[a-z0-9._-]*$/;
+
+// openSlugMenu: a small box under anchor to type the slug of Codex's own
+// entry a model is (#1571), empty for by its id; Enter or Set chooses it.
+// It is the proto menu while open, so a second right-click closes it.
+function openSlugMenu(anchor, value, choose) {
+  closeProtoMenu();
+  const box = el("div", "pop proto-menu native-slug-menu");
+  box.setAttribute("role", "dialog");
+  box.append(el("div", "pm-head", t("Codex's own model it is")));
+  const q = input(value, "gpt-6.1-sol");
+  q.classList.add("native-slug");
+  const set = el("button", "btn", t("Set"));
+  set.type = "button";
+  const row = el("div", "proto-row");
+  row.append(q, set);
+  const hint = el("div", "hint", "");
+  box.append(row, hint);
+  // what the backend takes (provider.nativeSlug): an OpenAI model's slug,
+  // or empty for by its id
+  const valid = () => { const v = q.value.trim().toLowerCase(); return v === "" || NATIVE_SLUG.test(v); };
+  const check = () => {
+    const ok = valid();
+    set.disabled = !ok;
+    q.setAttribute("aria-invalid", String(!ok));
+    hint.classList.toggle("bad", !ok);
+    hint.textContent = t(ok ? "Empty maps it by its ID, without the provider or a snapshot's date" : "Not an OpenAI model's slug: as gpt-6.1-sol or o4-mini");
+  };
+  q.oninput = check;
+  check();
+  const done = () => { if (!valid()) return; const v = q.value.trim().toLowerCase(); closeProtoMenu(); choose(v); };
+  set.onclick = (e) => { e.stopPropagation(); done(); };
+  q.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); done(); } };
+  const outside = (e) => { if (!box.contains(e.target) && !anchor.contains(e.target)) closeProtoMenu(); };
+  const keys = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeProtoMenu(); } };
+  const scroll = (e) => { if (!box.contains(e.target)) closeProtoMenu(); };
+  document.body.append(box);
+  placeMenu(box, anchor, "left", -4);
+  anchor.classList.add("open");
+  protoMenu = { anchor, box, outside, keys, scroll };
+  document.addEventListener("mousedown", outside, true);
+  document.addEventListener("keydown", keys, true);
+  document.addEventListener("scroll", scroll, true);
+  addEventListener("resize", closeProtoMenu);
+  q.focus({ preventScroll: true });
+}
+
 function openProtoMenu(anchor, opts, value, choose, head = "Protocol this key speaks", cls = "", align = "left", live = false, search = "") {
   closeProtoMenu();
   const multi = Array.isArray(value);

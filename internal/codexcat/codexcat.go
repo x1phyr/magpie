@@ -154,6 +154,16 @@ type model struct {
 	// instructions into the input, neither for a model not trained on
 	// them.
 	SearchTool bool `json:"supports_search_tool"`
+	// Code Mode and Responses Lite as Codex's own entry for the model
+	// has them, on a model of a model set native Responses compatible
+	// (catalog.Model.NativeResponses, nativeTools, #1571); left out, and
+	// so off, elsewhere. A value the user put in by hand stays (Keep):
+	// keep:"true" on use_responses_lite because before #1571 the only way
+	// to get Lite on a relay's model was to write it into models.json by
+	// hand, and an upgrade must not take it away; magpie writes false (left
+	// out) on every other entry, so a true there is the user's own.
+	ToolMode string `json:"tool_mode,omitempty" keep:"set"`
+	Lite     bool   `json:"use_responses_lite,omitempty" keep:"true"`
 	// Required from Codex 0.147 (#298: without it the whole catalog
 	// fails to load); later Codex ask for parallel calls whatever it
 	// says, so it says what they do.
@@ -257,6 +267,9 @@ func entriesAt(ms []catalog.Model, after int, effort string) []any {
 			e.Efforts = append(e.Efforts, level{Effort: ef})
 		}
 		e.AgentsEffort = agentsEffort(own, m)
+		if m.NativeResponses {
+			nativeTools(&e, own, m)
+		}
 		if len(m.Efforts) > 0 {
 			d := ModelDefault(m.Efforts, effort)
 			e.DefaultEffort = &d
@@ -270,7 +283,9 @@ func entriesAt(ms []catalog.Model, after int, effort string) []any {
 // owned are the keys of an entry magpie writes, or leaves out on purpose:
 // every field of model, and the two ownEntry takes out of Codex's own.
 // keepTrue are those of them where a true the user set by hand stays over
-// magpie's false (keep:"true").
+// magpie's false (keep:"true"). A key tagged keep:"set" magpie writes only
+// on some entries (tool_mode, #1571): left unowned, a value the user put on
+// another entry by hand stays.
 var owned, keepTrue = func() (own, yes map[string]bool) {
 	own = map[string]bool{"availability_nux": true, "upgrade": true}
 	yes = map[string]bool{}
@@ -278,7 +293,7 @@ var owned, keepTrue = func() (own, yes map[string]bool) {
 	for i := range t.NumField() {
 		f := t.Field(i)
 		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
-		if name == "" {
+		if name == "" || f.Tag.Get("keep") == "set" {
 			continue
 		}
 		own[name] = true
@@ -385,11 +400,7 @@ var gptModel = regexp.MustCompile(`^(gpt-|o\d)`)
 // relay, a dated snapshot), Ultrafast among them where the entry has it;
 // Fast on another GPT model; none on any other.
 func ownTiers(own map[string]map[string]any, m catalog.Model) []tier {
-	slug := strings.ToLower(m.ID)
-	if i := strings.LastIndex(slug, "/"); i >= 0 {
-		slug = slug[i+1:]
-	}
-	slug = datedSuffix.ReplaceAllString(slug, "")
+	slug := ownSlug(m)
 	if raw, ok := own[slug]["service_tiers"].([]any); ok {
 		var ts []tier
 		for _, r := range raw {
@@ -410,6 +421,102 @@ func ownTiers(own map[string]map[string]any, m catalog.Model) []tier {
 		return []tier{{ID: "priority", Name: "Fast", Description: "1.5x speed, increased usage"}}
 	}
 	return []tier{}
+}
+
+// nativeTools gives e, the entry of a model of a provider set native
+// Responses compatible (s2a/gpt-6.1-sol, a dated snapshot, an aliased id),
+// what is safe to take from Codex's own entry for the model it maps to
+// (NativeSlug), each where that entry has it (#1571): the prompt, verbatim,
+// Code Mode (tool_mode), Responses Lite, the experimental tools, the tool
+// search, parallel calls, the shell and apply_patch's kind. Left as magpie
+// has them: the slug, name, context window, efforts, input kinds and
+// reasoning summaries, which are what magpie routes and knows of the
+// provider; and the service tiers, multi-agent version and auto-review,
+// which belong to a ChatGPT account's backend. No mapping: the generic
+// entry as it was.
+func nativeTools(e *model, own map[string]map[string]any, m catalog.Model) {
+	slug, ok := NativeSlug(own, m)
+	if !ok {
+		return
+	}
+	raw := own[slug]
+	if s, _ := raw["base_instructions"].(string); strings.TrimSpace(s) != "" {
+		e.Instructions = s
+	}
+	e.ToolMode, _ = raw["tool_mode"].(string)
+	e.Lite, _ = raw["use_responses_lite"].(bool)
+	if ts, ok := raw["experimental_supported_tools"].([]any); ok {
+		e.Tools = []string{}
+		for _, t := range ts {
+			if s, ok := t.(string); ok {
+				e.Tools = append(e.Tools, s)
+			}
+		}
+	}
+	if b, ok := raw["supports_search_tool"].(bool); ok {
+		e.SearchTool = b
+	}
+	if b, ok := raw["supports_parallel_tool_calls"].(bool); ok {
+		e.Parallel = b
+	}
+	if s, _ := raw["shell_type"].(string); s != "" {
+		e.Shell = s
+	}
+	if s, _ := raw["apply_patch_tool_type"].(string); s != "" {
+		e.ApplyPatch = s
+	}
+}
+
+// NativeSlug is the slug of Codex's own entry (own, CacheEntries) a model
+// of a model set native Responses compatible maps to: the alias the
+// user named (catalog.Model.NativeAlias), else its id as it is, else
+// without the provider before it, else without a snapshot's date as well.
+// Only an OpenAI model (gptModel) maps, and only to one: an id that would
+// map to two entries (by case alone) maps to none, as does one Codex has
+// no entry for.
+func NativeSlug(own map[string]map[string]any, m catalog.Model) (string, bool) {
+	var tries []string
+	if a := strings.TrimSpace(m.NativeAlias); a != "" {
+		tries = append(tries, a)
+	}
+	bare := m.ID
+	if i := strings.LastIndex(bare, "/"); i >= 0 {
+		bare = bare[i+1:]
+	}
+	tries = append(tries, m.ID, bare, datedSuffix.ReplaceAllString(bare, ""))
+	for _, t := range tries {
+		if !gptModel.MatchString(strings.ToLower(t)) {
+			continue
+		}
+		if _, ok := own[t]; ok {
+			return t, true
+		}
+		var hits []string
+		for k := range own {
+			if strings.EqualFold(k, t) {
+				hits = append(hits, k)
+			}
+		}
+		switch len(hits) {
+		case 1:
+			return hits[0], true
+		case 0:
+			continue
+		default:
+			return "", false
+		}
+	}
+	return "", false
+}
+
+// ownSlug is the slug of Codex's own entry for the model a third-party one
+// serves: its id without the provider and a snapshot's date.
+func ownSlug(m catalog.Model) string {
+	slug := strings.ToLower(m.ID)
+	if i := strings.LastIndex(slug, "/"); i >= 0 {
+		slug = slug[i+1:]
+	}
+	return datedSuffix.ReplaceAllString(slug, "")
 }
 
 // fastTier is Fast as Codex's own catalog writes it on its GPT models.

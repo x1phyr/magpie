@@ -84,6 +84,13 @@ type Model struct {
 	// (gateway Request.Tier): Codex offers it the tiers of its own entry
 	// for the same model, Fast on another GPT model.
 	OwnTier bool `json:",omitempty"`
+	// NativeResponses is set on an OwnTier model the user set native
+	// Responses compatible (provider.NativeModel, #1571): its entry takes the
+	// prompt and tool capabilities of Codex's own entry for the model it
+	// maps to (codexcat.NativeSlug). NativeAlias is the slug the user named
+	// for it (settings' ModelNative), tried before any other.
+	NativeResponses bool   `json:",omitempty"`
+	NativeAlias     string `json:",omitempty"`
 	// AgentsV2 is set on a model Codex is told multi-agent V2 for, so its
 	// Ultra hands work to Codex's agents: one offering Ultra that no
 	// ChatGPT account answers for (provider.Entry's).

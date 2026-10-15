@@ -41,7 +41,13 @@ const providerUsage = `usage:
                                           user-agent=magpie, the default, sends magpie's;
                                           compaction=native asks the provider Codex's own compaction and hands
                                           Codex its sealed item as it came (a Responses API, a ChatGPT account,
-                                          Copilot), compaction=magpie, the default, has magpie summarise
+                                          Copilot), compaction=magpie, the default, has magpie summarise;
+                                          native-responses.<model>=on serves that model as OpenAI's native
+                                          Responses API does (Codex's own prompt, Code Mode, Responses Lite;
+                                          requests unfitted), off the default; only a custom provider with a
+                                          Responses URL. native-slug.<model>=gpt-6.1-sol names Codex's own
+                                          model it is (and turns it on); an empty one maps it by its id again
+                                          and turns nothing on. Not for a routing group's requests
   magpie provider key <id> <key>          change the API key
   magpie provider icon <id> <file|name>   give a custom provider a picture (PNG, JPEG, SVG…) or a built-in icon
   magpie provider fallback <id> <provider/model>…   where requests go when it's out of quota or down (none clears)
@@ -406,13 +412,24 @@ func providerCmd(args []string) error {
 		// groups and agents on its models move to the new one
 		from := p.ID
 		before := *p
-		if err := applyPairs(p, rest[1:]); err != nil {
+		pairs, native, err := nativePairs(rest[1:])
+		if err != nil {
+			return err
+		}
+		if err := applyPairs(p, pairs); err != nil {
 			return err
 		}
 		to := strings.ToLower(strings.TrimSpace(p.ID))
 		p.ID = from
 		if err := provider.Save(*p); err != nil {
 			return err
+		}
+		// each model's native Responses setting, kept by model in the
+		// settings, once the provider has the URLs it is set with (#1571)
+		if len(native) > 0 {
+			if err := provider.SetModelPrefs(from, native); err != nil {
+				return err
+			}
 		}
 		if to != from {
 			moved, err := agent.RenameProvider(from, to)
@@ -802,6 +819,12 @@ func showProvider(p provider.Provider) error {
 	if p.NativeCompaction {
 		kv("compaction", "native"+muted.Render("  Codex's own, sealed by the key or account that answers it"))
 	}
+	// the models served as OpenAI's native Responses API serves them (#1571)
+	for _, id := range p.Models {
+		if on, slug := p.NativeModel(id); on {
+			kv("native", id+muted.Render("  as Codex's own "+cmp.Or(slug, "model of its id")))
+		}
+	}
 	switch {
 	case p.Account != nil:
 		who := p.Account.User
@@ -1123,6 +1146,42 @@ func applyPairs(p *provider.Provider, pairs []string) error {
 		p.Decide = strings.ReplaceAll(p.Decide, provider.WorkspaceID, workspace)
 	}
 	return nil
+}
+
+// nativePairs takes native-responses.<model>=on|off and
+// native-slug.<model>=<slug> out of pairs (#1571): whether the model is
+// served as OpenAI's native Responses API serves it, and the slug of Codex's
+// own entry it is ("" maps it by its id), as SetModelPrefs takes them.
+func nativePairs(pairs []string) (rest []string, prefs map[string]provider.ModelPref, err error) {
+	prefs = map[string]provider.ModelPref{}
+	for _, kv := range pairs {
+		k, v, _ := strings.Cut(kv, "=")
+		lk := strings.ToLower(k)
+		switch {
+		case strings.HasPrefix(lk, "native-responses.") && len(k) > len("native-responses."):
+			model := k[len("native-responses."):]
+			var on bool
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "on", "yes":
+				on = true
+			case "off", "no", "":
+			default:
+				return nil, nil, fmt.Errorf("native-responses.%s=on|off, not %q", model, v)
+			}
+			m := prefs[model]
+			m.Native = &on
+			prefs[model] = m
+		case strings.HasPrefix(lk, "native-slug.") && len(k) > len("native-slug."):
+			model := k[len("native-slug."):]
+			slug := strings.TrimSpace(v)
+			m := prefs[model]
+			m.NativeSlug = &slug
+			prefs[model] = m
+		default:
+			rest = append(rest, kv)
+		}
+	}
+	return rest, prefs, nil
 }
 
 // setContext sets the context agents are told model takes ("*" for all
